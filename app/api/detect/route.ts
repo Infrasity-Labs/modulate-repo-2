@@ -6,7 +6,6 @@ import {
   extensionOf, type VelmaResponse,
 } from "@/lib/velma";
 
-export const runtime = "nodejs";
 export const maxDuration = 60;
 
 type ErrorCode =
