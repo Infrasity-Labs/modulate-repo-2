@@ -17,11 +17,6 @@ function fail(code: ErrorCode, message: string, status: number, headers?: Header
 }
 
 export async function POST(req: NextRequest) {
-  const key = process.env.VELMA_API_KEY;
-  if (!key) {
-    return fail("missing_key", "The server has no VELMA_API_KEY set. Add it to .env.local or your Vercel project settings.", 500);
-  }
-
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
   const rl = rateLimit(ip);
   if (!rl.ok) {
@@ -44,6 +39,11 @@ export async function POST(req: NextRequest) {
   const ext = extensionOf(file.name);
   if (!(ALLOWED_EXTENSIONS as readonly string[]).includes(ext)) {
     return fail("bad_type", `.${ext || "unknown"} is not supported. Use ${ALLOWED_EXTENSIONS.join(", ")}.`, 415);
+  }
+
+  const key = process.env.VELMA_API_KEY;
+  if (!key) {
+    return fail("missing_key", "The server has no VELMA_API_KEY set. Add it to .env.local or your Vercel project settings.", 500);
   }
 
   // Browser recordings (webm or ogg) are accepted by Velma as they are, so there is no transcoding step.

@@ -195,10 +195,17 @@
   --color-wave-active: var(--wave-active);
 }
 
-body {
-  background:
-    radial-gradient(60rem 28rem at 50% -8rem, color-mix(in oklab, var(--primary) 14%, transparent), transparent),
-    var(--background);
+html { background-color: var(--background); }
+
+body { background: transparent; position: relative; }
+
+body::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(60rem 28rem at 50% -8rem, color-mix(in oklab, var(--primary) 14%, transparent), transparent) no-repeat;
 }
 
 @media (prefers-reduced-motion: reduce) {

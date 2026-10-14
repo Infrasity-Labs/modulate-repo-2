@@ -245,7 +245,6 @@ export function Detector() {
               {i < step ? <Check className="size-3.5" /> : i + 1}
             </span>
             <span className="hidden sm:inline">{label}</span>
-            <span className="sm:hidden">{i === step ? label : ""}</span>
             {i === step && <motion.span layoutId="step-underline" className="absolute inset-x-0 bottom-0 h-0.5 bg-primary" />}
           </li>
         ))}
