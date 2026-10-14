@@ -46,6 +46,7 @@ export function Gauge({ value, tone }: { value: number; tone: keyof typeof COLOR
           {Math.round(reduce ? value : shown)}
           <span className="text-2xl text-muted-foreground">%</span>
         </div>
+        <div className="mt-1 text-xs text-muted-foreground">of speech judged natural</div>
       </div>
     </div>
   );

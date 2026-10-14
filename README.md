@@ -9,8 +9,10 @@ A small Next.js app that sends a voice clip to Modulate's Velma Deepfake Detecti
 **This version analyses the clip after you finish. It does not stream live audio.** See [Batch or streaming](#batch-or-streaming) for why.
 
 <p align="center">
-  <img src="docs/screenshots/step1-choose-ready.png" alt="Step 1, choose audio" width="80%">
+  <img src="docs/screenshots/step3-result-desktop-light.png" alt="Step 3, result" width="80%">
 </p>
+
+The result screenshots use a clip made with a text-to-speech voice, so the clip is synthetic by construction.
 
 > Demo only. Scores are estimates and are not proof.
 
@@ -184,7 +186,7 @@ docs/screenshots/       UI screenshots
 | Desktop | [home](docs/screenshots/home-desktop-light.png) | [home](docs/screenshots/home-desktop-dark.png) |
 | Mobile | [home](docs/screenshots/home-mobile-light.png) | [home](docs/screenshots/home-mobile-dark.png) |
 
-Steps and states: [choose, empty](docs/screenshots/step1-choose-empty.png), [choose, ready](docs/screenshots/step1-choose-ready.png), [analysing](docs/screenshots/step2-analysing.png), [missing key](docs/screenshots/error-missing-key.png), [bad file](docs/screenshots/error-bad-file.png), [mic denied](docs/screenshots/error-mic-denied.png).
+Steps and states: [result, light](docs/screenshots/step3-result-desktop-light.png), [result, dark](docs/screenshots/step3-result-desktop-dark.png), [result, mobile](docs/screenshots/step3-result-mobile-light.png), [choose, empty](docs/screenshots/step1-choose-empty.png), [choose, ready](docs/screenshots/step1-choose-ready.png), [analysing](docs/screenshots/step2-analysing.png), [missing key](docs/screenshots/error-missing-key.png), [bad file](docs/screenshots/error-bad-file.png), [mic denied](docs/screenshots/error-mic-denied.png).
 
 ## Links
 
