@@ -41,3 +41,18 @@ export function Waveform({
 export function idlePeaks(n = 72) {
   return Array.from({ length: n }, (_, i) => 0.18 + 0.12 * Math.abs(Math.sin(i * 0.55)));
 }
+
+/** Row of small dots that ripple while `active`, like a voice-call control bar. */
+export function DotWave({ active, count = 36 }: { active: boolean; count?: number }) {
+  return (
+    <div className="flex h-6 items-center justify-between gap-[3px]" aria-hidden>
+      {Array.from({ length: count }, (_, i) => (
+        <span
+          key={i}
+          className={cn("w-[2px] rounded-full bg-foreground/70", active ? "h-full origin-center" : "h-[3px] bg-foreground/30")}
+          style={active ? { animation: `dot-wave ${0.7 + (i % 7) * 0.09}s ease-in-out ${(i % 11) * 0.06}s infinite` } : undefined}
+        />
+      ))}
+    </div>
+  );
+}

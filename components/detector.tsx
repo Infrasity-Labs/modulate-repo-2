@@ -2,15 +2,12 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  AlertTriangle, Check, ChevronDown, Copy, FileAudio, Loader2, MicOff, Mic, Pause, Play,
-  RotateCcw, ShieldAlert, ShieldCheck, ShieldQuestion, Square, UploadCloud, VolumeX, Waves,
+  AlertTriangle, Check, ChevronDown, Copy, FileAudio, Loader2, Mic, MicOff, Pause, Play,
+  RotateCcw, Square, UploadCloud, VolumeX, Waves,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Gauge } from "@/components/gauge";
-import { Waveform, idlePeaks } from "@/components/waveform";
+import { DotWave, Waveform } from "@/components/waveform";
 import { extFromMime, formatBytes, formatDuration, readWaveform, recorderMime } from "@/lib/audio";
 import { LIKELY_REAL_MIN, LIKELY_SYNTHETIC_MAX, type Interpretation } from "@/lib/interpret";
 import { ALLOWED_EXTENSIONS, MAX_UPLOAD_BYTES, extensionOf, type VelmaFrame } from "@/lib/velma";
@@ -22,15 +19,17 @@ interface Picked { file: File; peaks: number[]; duration: number; origin: "uploa
 type Phase = "choose" | "analysing" | "result";
 
 const MAX_RECORD_SEC = 30;
-const STEPS = ["Choose audio", "Analyse", "Result"] as const;
+const COLLAPSED_WINDOWS = 4;
 
 const TONE = {
-  real: { icon: ShieldCheck, title: "Likely real", box: "bg-real-soft text-real", text: "text-real" },
-  synthetic: { icon: ShieldAlert, title: "Likely synthetic", box: "bg-synthetic-soft text-synthetic", text: "text-synthetic" },
-  unsure: { icon: ShieldQuestion, title: "Unsure", box: "bg-unsure-soft text-unsure", text: "text-unsure" },
+  real: { title: "Likely real", text: "text-real", bar: "bg-real" },
+  synthetic: { title: "Likely synthetic", text: "text-synthetic", bar: "bg-synthetic" },
+  unsure: { title: "Unsure", text: "text-unsure", bar: "bg-unsure" },
 } as const;
 
 const STATUS_LINES = ["Uploading the clip", "Velma is listening", "Scoring each four second window"];
+
+const clock = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
 export function Detector() {
   const [phase, setPhase] = useState<Phase>("choose");
@@ -47,6 +46,8 @@ export function Detector() {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [decoding, setDecoding] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [finishedAt, setFinishedAt] = useState("");
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const urlRef = useRef<string | null>(null);
@@ -54,8 +55,6 @@ export function Detector() {
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  const step = phase === "choose" ? 0 : phase === "analysing" ? 1 : 2;
 
   useEffect(() => {
     fetch("/samples/manifest.json")
@@ -204,6 +203,8 @@ export function Detector() {
       const json = await res.json().catch(() => null);
       if (!res.ok) throw new Error(json?.error?.message ?? `Request failed (${res.status}).`);
       setResult(json as Result);
+      setFinishedAt(clock());
+      setShowAll(false);
       setPhase("result");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
@@ -223,6 +224,9 @@ export function Detector() {
   const summary = result?.summary;
   const tone = summary && summary.label !== "no-speech" ? TONE[summary.label] : null;
   const pct = summary?.naturalShare != null ? summary.naturalShare * 100 : 0;
+  const speech = result?.frames.filter((f) => f.verdict !== "no-content") ?? [];
+  const syntheticPct = summary?.naturalShare != null ? 100 - pct : 0;
+  const confPct = (summary?.meanConfidence ?? 0) * 100;
 
   const copyResult = async () => {
     if (!summary || !result) return;
@@ -232,74 +236,52 @@ export function Detector() {
     try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch {}
   };
 
+  const windows = result?.frames ?? [];
+  const visibleWindows = showAll ? windows : windows.slice(0, COLLAPSED_WINDOWS);
+
   return (
-    <Card className="mx-auto w-full max-w-3xl gap-0 overflow-hidden rounded-3xl border bg-card p-0 shadow-xl shadow-primary/5">
-      {/* progress */}
-      <ol className="grid grid-cols-3 border-b bg-muted/50" aria-label="Progress">
-        {STEPS.map((label, i) => (
-          <li key={label} aria-current={i === step ? "step" : undefined}
-            className={cn("relative flex items-center justify-center gap-2 px-2 py-3.5 text-sm font-medium sm:justify-start sm:px-6",
-              i === step ? "text-foreground" : "text-muted-foreground")}>
-            <span className={cn("grid size-6 shrink-0 place-items-center rounded-full text-xs font-semibold transition-colors",
-              i < step ? "bg-primary text-primary-foreground" : i === step ? "bg-primary text-primary-foreground" : "bg-border text-muted-foreground")}>
-              {i < step ? <Check className="size-3.5" /> : i + 1}
-            </span>
-            <span className="hidden sm:inline">{label}</span>
-            {i === step && <motion.span layoutId="step-underline" className="absolute inset-x-0 bottom-0 h-0.5 bg-primary" />}
-          </li>
-        ))}
-      </ol>
-
-      <div className="p-5 sm:p-8">
-        <AnimatePresence mode="wait">
-          {phase === "choose" && (
-            <motion.div key="choose" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="space-y-5">
-              <header>
-                <h2 className="font-heading text-2xl font-semibold">1. Choose audio</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Upload a clip, record your voice, or pick a sample. Short clips of 4 to 60 seconds work best.</p>
-              </header>
-
-              {!picked && !recording && (
-                <div className="grid gap-3 sm:grid-cols-2">
+    <div className="mx-auto w-full max-w-2xl">
+      <div className="space-y-3 pb-36">
+        <AnimatePresence mode="popLayout" initial={false}>
+          {/* source card */}
+          {phase !== "result" && (
+            <MsgCard key="source" label="Source" meta={picked ? (picked.origin === "mic" ? "Recorded" : picked.origin === "sample" ? "Sample" : "Uploaded") : "Step 1 of 3"}>
+              {!picked && !recording && !decoding && (
+                <>
+                  <p className="text-[15px] font-medium text-foreground">Add a voice clip to analyse</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Clips of 4 to 60 seconds work best.</p>
                   <div
                     onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
                     onDragLeave={() => setDragging(false)}
                     onDrop={(e) => { e.preventDefault(); setDragging(false); const f = e.dataTransfer.files?.[0]; if (f) void accept(f, "upload"); }}
-                    className={cn("flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed p-6 text-center transition-colors",
-                      dragging ? "border-primary bg-accent" : "border-border bg-muted/30 hover:border-primary/60")}
+                    onClick={() => inputRef.current?.click()}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); inputRef.current?.click(); } }}
+                    className={cn("mt-4 flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-dashed px-4 py-7 text-center transition-colors focus-visible:outline-2 focus-visible:outline-ring",
+                      dragging ? "border-foreground/50 bg-muted" : "border-border hover:border-foreground/30 hover:bg-muted/50")}
                   >
-                    <UploadCloud className="size-7 text-primary" aria-hidden />
-                    <p className="text-sm font-medium">Drop an audio file here</p>
+                    <UploadCloud className="size-5 text-muted-foreground" aria-hidden />
+                    <p className="text-sm font-medium">Drop an audio file, or <span className="underline underline-offset-4">browse</span></p>
                     <p className="text-xs text-muted-foreground">wav, mp3, m4a, ogg, webm and more, up to {MAX_UPLOAD_BYTES / 1024 / 1024} MB</p>
-                    <input ref={inputRef} type="file" className="sr-only" id="file" aria-label="Choose an audio file"
+                    <input ref={inputRef} type="file" className="sr-only" aria-label="Choose an audio file"
                       accept={ALLOWED_EXTENSIONS.map((e) => `.${e}`).join(",") + ",audio/*"}
+                      onClick={(e) => e.stopPropagation()}
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) void accept(f, "upload"); e.target.value = ""; }} />
-                    <Button variant="outline" size="sm" onClick={() => inputRef.current?.click()}>Browse files</Button>
                   </div>
-
-                  <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border bg-muted/30 p-6 text-center">
-                    <Mic className="size-7 text-primary" aria-hidden />
-                    <p className="text-sm font-medium">Record from your microphone</p>
-                    <p className="text-xs text-muted-foreground">Up to {MAX_RECORD_SEC} seconds. You can replay it before analysing.</p>
-                    <Button size="sm" onClick={startRecording}><Mic className="size-4" /> Start recording</Button>
-                  </div>
-                </div>
-              )}
-
-              {micError && (
-                <p role="alert" className="flex items-start gap-2 rounded-xl bg-unsure-soft p-3 text-sm text-unsure">
-                  <MicOff className="mt-0.5 size-4 shrink-0" /> {micError}
-                </p>
+                </>
               )}
 
               {recording && (
-                <div className="flex flex-col items-center gap-4 rounded-2xl border bg-muted/30 p-6" aria-live="polite">
-                  <div className="flex items-center gap-2 text-sm font-medium text-synthetic">
-                    <span className="relative flex size-2.5"><span className="absolute inline-flex size-full animate-ping rounded-full bg-synthetic opacity-60" /><span className="relative inline-flex size-2.5 rounded-full bg-synthetic" /></span>
-                    Recording {formatDuration(recSec)} / {formatDuration(MAX_RECORD_SEC)}
+                <div aria-live="polite">
+                  <p className="flex items-center gap-2 text-[15px] font-medium">
+                    <span className="relative flex size-2"><span className="absolute inline-flex size-full animate-ping rounded-full bg-record opacity-60" /><span className="relative inline-flex size-2 rounded-full bg-record" /></span>
+                    Recording
+                  </p>
+                  <p className="mt-1 text-sm tabular-nums text-muted-foreground">{formatDuration(recSec)} of {formatDuration(MAX_RECORD_SEC)}</p>
+                  <div className="mt-4 h-1 overflow-hidden rounded-full bg-muted">
+                    <div className="h-full rounded-full bg-record transition-[width] duration-1000 ease-linear" style={{ width: `${(recSec / MAX_RECORD_SEC) * 100}%` }} />
                   </div>
-                  <Waveform peaks={idlePeaks()} animate />
-                  <Button variant="destructive" onClick={stopRecording}><Square className="size-4" /> Stop</Button>
                 </div>
               )}
 
@@ -308,132 +290,230 @@ export function Detector() {
               )}
 
               {picked && (
-                <div className="space-y-4 rounded-2xl border bg-muted/30 p-4 sm:p-5">
+                <div>
                   <div className="flex items-center gap-3">
-                    <Button size="icon" className="size-11 shrink-0 rounded-full" onClick={togglePlay} aria-label={playing ? "Pause preview" : "Play preview"}>
-                      {playing ? <Pause className="size-5" /> : <Play className="size-5" />}
-                    </Button>
-                    <div className="min-w-0">
-                      <p className="flex items-center gap-1.5 truncate text-sm font-medium"><FileAudio className="size-4 shrink-0 text-muted-foreground" />{picked.file.name}</p>
-                      <p className="text-xs text-muted-foreground">{formatDuration(picked.duration)} · {formatBytes(picked.file.size)} · {picked.origin === "mic" ? "recorded" : picked.origin === "sample" ? "sample" : "uploaded"}</p>
+                    <button type="button" onClick={togglePlay} disabled={phase === "analysing"}
+                      aria-label={playing ? "Pause preview" : "Play preview"}
+                      className="grid size-9 shrink-0 place-items-center rounded-full border bg-card transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50">
+                      {playing ? <Pause className="size-4" /> : <Play className="size-4 translate-x-px" />}
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <p className="flex items-center gap-1.5 truncate text-[15px] font-medium"><FileAudio className="size-4 shrink-0 text-muted-foreground" />{picked.file.name}</p>
+                      <p className="text-xs tabular-nums text-muted-foreground">{formatDuration(picked.duration)} · {formatBytes(picked.file.size)}</p>
                     </div>
+                    {phase === "choose" && (
+                      <button type="button" onClick={reset} className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">Clear</button>
+                    )}
                   </div>
-                  <Waveform peaks={picked.peaks} progress={progress} />
+                  <Waveform peaks={picked.peaks} progress={progress} animate={phase === "analysing"} className="mt-4" />
+                  {phase === "analysing" && (
+                    <p className="mt-3 flex items-center gap-2 text-sm text-muted-foreground" role="status" aria-live="polite">
+                      <Loader2 className="size-3.5 animate-spin" /> {STATUS_LINES[statusIdx]}…
+                    </p>
+                  )}
                 </div>
               )}
 
-              {samples.length > 0 && !recording && (
-                <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Or try a sample</p>
+              {samples.length > 0 && !recording && !picked && !decoding && (
+                <div className="mt-5 border-t pt-4">
+                  <p className="mb-2 text-xs text-muted-foreground">Or try a sample</p>
                   <div className="flex flex-wrap gap-2">
                     {samples.map((s) => (
-                      <Button key={s.file} variant="secondary" size="sm" onClick={() => pickSample(s)} title={`${s.source} (${s.licence})`}>
-                        <Waves className="size-4" /> {s.title}
-                      </Button>
+                      <button key={s.file} type="button" onClick={() => pickSample(s)} title={`${s.source} (${s.licence})`}
+                        className="inline-flex items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring">
+                        <Waves className="size-3.5 text-muted-foreground" /> {s.title}
+                      </button>
                     ))}
                   </div>
                 </div>
               )}
-
-              {error && (
-                <p role="alert" className="flex items-start gap-2 rounded-xl bg-synthetic-soft p-3 text-sm text-synthetic">
-                  <AlertTriangle className="mt-0.5 size-4 shrink-0" /> <span>{error}</span>
-                </p>
-              )}
-
-              <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                <p className="text-xs text-muted-foreground">Analyses the clip after you finish. This version does not stream live audio.</p>
-                <div className="flex gap-2">
-                  {picked && <Button variant="ghost" onClick={reset}>Clear</Button>}
-                  <Button size="lg" onClick={analyse} disabled={!picked || recording || decoding}>Analyse clip</Button>
-                </div>
-              </div>
-            </motion.div>
+            </MsgCard>
           )}
 
-          {phase === "analysing" && picked && (
-            <motion.div key="analysing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-6 py-4 text-center" aria-live="polite">
-              <header>
-                <h2 className="font-heading text-2xl font-semibold">2. Analysing</h2>
-                <p className="mt-1 text-sm text-muted-foreground" role="status">{STATUS_LINES[statusIdx]}...</p>
-              </header>
-              <Waveform peaks={picked.peaks} animate />
-              <Button size="lg" disabled><Loader2 className="size-4 animate-spin" /> Analysing</Button>
-            </motion.div>
+          {(error || micError) && phase === "choose" && (
+            <motion.p key="err" layout initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              role="alert" className={cn("flex items-start gap-2 rounded-2xl border px-4 py-3 text-sm",
+                error ? "border-synthetic/30 bg-synthetic-soft text-synthetic" : "border-unsure/30 bg-unsure-soft text-unsure")}>
+              {error ? <AlertTriangle className="mt-0.5 size-4 shrink-0" /> : <MicOff className="mt-0.5 size-4 shrink-0" />}
+              <span>{error ?? micError}</span>
+            </motion.p>
           )}
 
+          {/* result cards */}
           {phase === "result" && result && summary && (
-            <motion.div key="result" initial={{ opacity: 0, scale: 0.98, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }} className="space-y-6">
-              <header className="text-center">
-                <h2 className="font-heading text-2xl font-semibold">3. Result</h2>
-              </header>
-
-              {tone ? (
-                <>
-                  <Gauge value={pct} tone={summary.label as "real" | "synthetic" | "unsure"} />
-                  <div className="text-center">
-                    <span className={cn("inline-flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-semibold", tone.box)}>
-                      <tone.icon className="size-4" /> {tone.title}
-                    </span>
-                    <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground">
-                      Velma judged {pct.toFixed(0)}% of the speech in this clip as natural, across {(summary.speechMs / 1000).toFixed(1)} seconds of detected speech.
+            <>
+              <MsgCard key="verdict" label="Verdict" meta={finishedAt}>
+                {tone ? (
+                  <>
+                    <p className={cn("text-xl font-semibold tracking-tight", tone.text)}>{tone.title}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {pct.toFixed(0)}% of {(summary.speechMs / 1000).toFixed(1)} seconds of detected speech was judged natural.
                     </p>
+                    <div className="mt-5 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-3">
+                      <Metric label="Natural" value={pct} bar="bg-real" />
+                      <Metric label="Synthetic" value={syntheticPct} bar="bg-synthetic" />
+                      <Metric label="Confidence" value={confPct} bar="bg-foreground/60" />
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-start gap-3">
+                    <VolumeX className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+                    <div>
+                      <p className="text-[15px] font-medium">No speech detected</p>
+                      <p className="mt-1 text-sm text-muted-foreground">Velma marked every window as no content, so there is nothing to score. Try a clip with a voice in it.</p>
+                    </div>
                   </div>
-                  <Timeline frames={result.frames} />
-                </>
-              ) : (
-                <div className="mx-auto flex max-w-md flex-col items-center gap-3 rounded-2xl bg-muted p-6 text-center">
-                  <VolumeX className="size-8 text-muted-foreground" />
-                  <p className="font-medium">No speech detected</p>
-                  <p className="text-sm text-muted-foreground">Velma marked every window as no content, so there is nothing to score. Try a clip with a voice in it.</p>
-                </div>
+                )}
+              </MsgCard>
+
+              {windows.length > 0 && tone && (
+                <MsgCard key="timeline" label="Timeline" meta={`${windows.length} windows`}>
+                  <Timeline frames={windows} />
+                </MsgCard>
               )}
 
-              <Collapsible className="rounded-2xl border">
-                <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 rounded-2xl px-4 py-3 text-left text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
-                  How to read this score
-                  <ChevronDown className="size-4 transition-transform group-data-[panel-open]:rotate-180" />
-                </CollapsibleTrigger>
-                <CollapsibleContent className="space-y-2 px-4 pb-4 text-sm text-muted-foreground">
-                  <p>Velma scores every four second window of audio and gives each one a verdict (synthetic, non-synthetic, or no content) plus a confidence in that verdict. Confidence is how sure Velma is of its verdict. It is not the chance that the audio is fake.</p>
-                  <p>The meter shows the share of detected speech, weighted by time, that Velma judged non-synthetic. Windows with no speech are left out.</p>
-                  <p>Modulate does not publish a clip-level cut-off. The labels here use demo defaults from this repo: {Math.round(LIKELY_REAL_MIN * 100)}% or more reads as likely real, {Math.round(LIKELY_SYNTHETIC_MAX * 100)}% or less as likely synthetic, and anything between as unsure. Modulate advises setting your own threshold against your own labelled recordings.</p>
-                </CollapsibleContent>
-              </Collapsible>
+              {visibleWindows.map((f, i) => (
+                <WindowCard key={`w-${i}`} frame={f} index={i} />
+              ))}
 
-              <div className="flex flex-wrap justify-center gap-3">
-                <Button size="lg" onClick={reset}><RotateCcw className="size-4" /> Try another clip</Button>
-                <Button size="lg" variant="outline" onClick={copyResult}>
-                  {copied ? <Check className="size-4" /> : <Copy className="size-4" />} {copied ? "Copied" : "Copy result"}
-                </Button>
-              </div>
-            </motion.div>
+              {windows.length > COLLAPSED_WINDOWS && (
+                <motion.button key="more" layout type="button" onClick={() => setShowAll((v) => !v)}
+                  className="mx-auto flex items-center gap-1.5 rounded-full border bg-card px-3.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+                  {showAll ? "Show fewer windows" : `Show all ${windows.length} windows`}
+                  <ChevronDown className={cn("size-3.5 transition-transform", showAll && "rotate-180")} />
+                </motion.button>
+              )}
+
+              <motion.div key="how" layout>
+                <Collapsible className="rounded-2xl border bg-card">
+                  <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 rounded-2xl px-4 py-3 text-left text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
+                    How to read this score
+                    <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[panel-open]:rotate-180" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="space-y-2 px-4 pb-4 text-sm leading-relaxed text-muted-foreground">
+                    <p>Velma scores every four second window of audio and gives each one a verdict (synthetic, non-synthetic, or no content) plus a confidence in that verdict. Confidence is how sure Velma is of its verdict. It is not the chance that the audio is fake.</p>
+                    <p>Natural is the share of detected speech, weighted by time, that Velma judged non-synthetic. Windows with no speech are left out.</p>
+                    <p>Modulate does not publish a clip-level cut-off. The labels here use demo defaults from this repo: {Math.round(LIKELY_REAL_MIN * 100)}% or more reads as likely real, {Math.round(LIKELY_SYNTHETIC_MAX * 100)}% or less as likely synthetic, and anything between as unsure. Modulate advises setting your own threshold against your own labelled recordings.</p>
+                  </CollapsibleContent>
+                </Collapsible>
+              </motion.div>
+            </>
           )}
         </AnimatePresence>
+        <span className="sr-only" aria-live="polite">{speech.length ? `${speech.length} speech windows scored` : ""}</span>
       </div>
-    </Card>
+
+      {/* floating control pill */}
+      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-20 flex justify-center bg-gradient-to-t from-background via-background/90 to-transparent px-4 pb-6 pt-10">
+        <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-full border bg-card/95 p-2 pl-2 shadow-lg shadow-black/5 backdrop-blur">
+          <button type="button" onClick={recording ? stopRecording : startRecording}
+            disabled={phase !== "choose" || decoding}
+            aria-label={recording ? "Stop recording" : "Record from microphone"}
+            className={cn("grid size-10 shrink-0 place-items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-40",
+              recording ? "bg-record/10 text-record" : "bg-muted text-foreground hover:bg-border")}>
+            {recording ? <Square className="size-4 fill-current" /> : <Mic className="size-4" />}
+          </button>
+
+          <div className="min-w-0 flex-1">
+            <DotWave active={recording || phase === "analysing"} />
+          </div>
+
+          {phase === "result" ? (
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button type="button" onClick={copyResult} aria-label="Copy result"
+                className="grid size-10 place-items-center rounded-full border bg-card text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+                {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+              </button>
+              <button type="button" onClick={reset}
+                className="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-ring">
+                <RotateCcw className="size-4" /> New clip
+              </button>
+            </div>
+          ) : recording ? (
+            <button type="button" onClick={stopRecording}
+              className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full bg-record px-4 text-sm font-semibold text-white transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-ring">
+              <Square className="size-3.5 fill-current" /> Stop
+            </button>
+          ) : (
+            <button type="button" onClick={analyse} disabled={!picked || decoding || phase === "analysing"}
+              className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-40">
+              {phase === "analysing" ? <><Loader2 className="size-4 animate-spin" /> Analysing</> : "Analyse clip"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MsgCard({ label, meta, children }: { label: string; meta?: string; children: React.ReactNode }) {
+  return (
+    <motion.section layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
+      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      className="rounded-2xl border bg-card px-5 py-4 shadow-[0_1px_2px_rgb(0_0_0/0.03)]">
+      <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
+        <span>{label}</span>
+        {meta && <span className="tabular-nums">{meta}</span>}
+      </div>
+      {children}
+    </motion.section>
+  );
+}
+
+function Metric({ label, value, bar }: { label: string; value: number; bar: string }) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between text-sm">
+        <span className="font-medium">{label}</span>
+        <span className="tabular-nums text-muted-foreground">{(value / 100).toFixed(2)}</span>
+      </div>
+      <div className="mt-1.5 h-[3px] overflow-hidden rounded-full bg-muted">
+        <motion.div className={cn("h-full rounded-full", bar)} initial={{ width: 0 }} animate={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+          transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }} />
+      </div>
+    </div>
+  );
+}
+
+const VERDICT = {
+  "non-synthetic": { name: "Natural", bar: "bg-real" },
+  synthetic: { name: "Synthetic", bar: "bg-synthetic" },
+  "no-content": { name: "No speech", bar: "bg-border" },
+} as const;
+
+function WindowCard({ frame, index }: { frame: VelmaFrame; index: number }) {
+  const v = VERDICT[frame.verdict];
+  const range = `${formatDuration(frame.start_time_ms / 1000)} – ${formatDuration(frame.end_time_ms / 1000)}`;
+  return (
+    <MsgCard label={`Window ${index + 1}`} meta={range}>
+      <p className="text-[15px] font-medium">{v.name}</p>
+      {frame.verdict !== "no-content" && (
+        <div className="mt-3 max-w-[16rem]">
+          <Metric label="Confidence" value={frame.confidence * 100} bar={v.bar} />
+        </div>
+      )}
+    </MsgCard>
   );
 }
 
 function Timeline({ frames }: { frames: VelmaFrame[] }) {
-  if (!frames.length) return null;
   const total = frames[frames.length - 1].end_time_ms || 1;
   const color = (v: VelmaFrame["verdict"]) =>
     v === "synthetic" ? "bg-synthetic" : v === "non-synthetic" ? "bg-real" : "bg-border";
   return (
-    <figure className="mx-auto max-w-md">
-      <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted" role="img"
+    <figure>
+      <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted" role="img"
         aria-label={`Verdict per window: ${frames.map((f) => f.verdict).join(", ")}`}>
         {frames.map((f, i) => (
           <div key={i} className={cn("h-full border-r border-card last:border-0", color(f.verdict))}
             style={{ width: `${((f.end_time_ms - f.start_time_ms) / total) * 100}%`, opacity: f.verdict === "no-content" ? 0.6 : 0.35 + 0.65 * f.confidence }} />
         ))}
       </div>
-      <figcaption className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-real" />natural</span>
-        <span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-synthetic" />synthetic</span>
-        <span className="flex items-center gap-1.5"><i className="size-2 rounded-full bg-border" />no speech</span>
-        <span>Brighter means more confident</span>
+      <figcaption className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1.5"><i className="size-1.5 rounded-full bg-real" />Natural</span>
+        <span className="flex items-center gap-1.5"><i className="size-1.5 rounded-full bg-synthetic" />Synthetic</span>
+        <span className="flex items-center gap-1.5"><i className="size-1.5 rounded-full bg-border" />No speech</span>
+        <span className="ml-auto">Brighter is more confident</span>
       </figcaption>
     </figure>
   );

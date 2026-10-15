@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
-import { Bricolage_Grotesque, Inter } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
-const heading = Bricolage_Grotesque({ variable: "--font-heading-face", subsets: ["latin"], display: "swap" });
 const body = Inter({ variable: "--font-body-face", subsets: ["latin"], display: "swap" });
 
 export const metadata: Metadata = {
@@ -14,7 +13,7 @@ const themeScript = `try{var t=localStorage.getItem('theme');if(t==='dark'||(!t&
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${heading.variable} ${body.variable} h-full antialiased`}>
+    <html lang="en" suppressHydrationWarning className={`${body.variable} h-full antialiased`}>
       <head><script dangerouslySetInnerHTML={{ __html: themeScript }} /></head>
       <body className="min-h-full flex flex-col font-sans">{children}</body>
     </html>
