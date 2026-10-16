@@ -248,17 +248,6 @@ modulate-repo-2/
 └── LICENSE                     MIT
 ```
 
-## Screenshots
-
-The control pill stays at the bottom of the screen while you scroll, then rests above the footer at the end of the page.
-
-| | Light | Dark |
-|---|---|---|
-| Desktop | [home](docs/screenshots/home-desktop-light.png) | [home](docs/screenshots/home-desktop-dark.png) |
-| Mobile | [home](docs/screenshots/home-mobile-light.png) | [home](docs/screenshots/home-mobile-dark.png) |
-
-Steps and states: [result, light](docs/screenshots/step3-result-desktop-light.png), [result, dark](docs/screenshots/step3-result-desktop-dark.png), [result, mobile](docs/screenshots/step3-result-mobile-light.png), [pill above footer](docs/screenshots/result-pill-above-footer.png), [choose, ready](docs/screenshots/step1-choose-ready.png), [analysing](docs/screenshots/step2-analysing.png), [bad file](docs/screenshots/error-bad-file.png).
-
 ## Links
 
 - [Velma Deepfake Detection docs](https://docs.modulate.ai/get-started/deepfake)
