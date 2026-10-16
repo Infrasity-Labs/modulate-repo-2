@@ -35,7 +35,7 @@ export default function Home() {
       </main>
 
       <footer className="border-t">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-5 py-6 pb-28 text-xs text-muted-foreground">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-5 py-6 text-xs text-muted-foreground">
           <p>Demo only. Scores are estimates and are not proof. Your key stays on the server and audio is not stored by this app.</p>
           <nav className="flex items-center gap-x-5" aria-label="Footer">
             <a className={link} href={REPO} target="_blank" rel="noreferrer"><Code2 className="size-3.5" /> GitHub</a>

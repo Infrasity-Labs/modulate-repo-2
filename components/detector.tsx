@@ -241,7 +241,7 @@ export function Detector() {
 
   return (
     <div className="mx-auto w-full max-w-2xl">
-      <div className="space-y-3 pb-36">
+      <div className="space-y-3 pb-6">
         <AnimatePresence mode="popLayout" initial={false}>
           {/* source card */}
           {phase !== "result" && (
@@ -352,7 +352,7 @@ export function Detector() {
                     <div className="mt-5 grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-3">
                       <Metric label="Natural" value={pct} bar="bg-real" />
                       <Metric label="Synthetic" value={syntheticPct} bar="bg-synthetic" />
-                      <Metric label="Confidence" value={confPct} bar="bg-foreground/60" />
+                      <Metric label="Avg confidence" value={confPct} bar="bg-foreground/60" />
                     </div>
                   </>
                 ) : (
@@ -403,8 +403,8 @@ export function Detector() {
         <span className="sr-only" aria-live="polite">{speech.length ? `${speech.length} speech windows scored` : ""}</span>
       </div>
 
-      {/* floating control pill */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-20 flex justify-center bg-gradient-to-t from-background via-background/90 to-transparent px-4 pb-6 pt-10">
+      {/* control pill: sticks to the viewport bottom while scrolling, then rests above the footer */}
+      <div className="pointer-events-none sticky bottom-0 z-20 flex justify-center bg-gradient-to-t from-background via-background/90 to-transparent px-4 pb-4 pt-8">
         <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-full border bg-card/95 p-2 pl-2 shadow-lg shadow-black/5 backdrop-blur">
           <button type="button" onClick={recording ? stopRecording : startRecording}
             disabled={phase !== "choose" || decoding}
@@ -488,7 +488,7 @@ function WindowCard({ frame, index }: { frame: VelmaFrame; index: number }) {
     <MsgCard label={`Window ${index + 1}`} meta={range}>
       <p className="text-[15px] font-medium">{v.name}</p>
       {frame.verdict !== "no-content" && (
-        <div className="mt-3 max-w-[16rem]">
+        <div className="mt-3">
           <Metric label="Confidence" value={frame.confidence * 100} bar={v.bar} />
         </div>
       )}

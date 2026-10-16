@@ -12,7 +12,7 @@ A small Next.js app that sends a voice clip to Modulate's Velma Deepfake Detecti
   <img src="docs/screenshots/step3-result-desktop-light.png" alt="Step 3, result" width="80%">
 </p>
 
-The result screenshots use a clip made with a text-to-speech voice, so the clip is synthetic by construction.
+The result screenshots use a clip made with the macOS text-to-speech voice, so the clip is synthetic by construction. They come from a real call to Velma, not mock data.
 
 > Demo only. Scores are estimates and are not proof.
 
@@ -22,8 +22,10 @@ The result screenshots use a clip made with a text-to-speech voice, so the clip 
 - [Run locally](#run-locally)
 - [Environment variables](#environment-variables)
 - [How it works](#how-it-works)
+- [How a clip is split into windows](#how-a-clip-is-split-into-windows)
 - [How the key is protected](#how-the-key-is-protected)
-- [Reading the result](#reading-the-result)
+- [Metrics: natural, synthetic and confidence](#metrics-natural-synthetic-and-confidence)
+- [From windows to a label](#from-windows-to-a-label)
 - [Batch or streaming](#batch-or-streaming)
 - [Limits and rate limiting](#limits-and-rate-limiting)
 - [Add sample clips](#add-sample-clips)
@@ -63,17 +65,26 @@ Other scripts: `pnpm lint`, `pnpm exec tsc --noEmit`, `pnpm build`, `pnpm start`
 
 ## How it works
 
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as Browser
+    participant A as Next.js API route<br/>/api/detect
+    participant V as Velma<br/>batch endpoint
+
+    U->>U: Pick, drop or record audio
+    U->>A: POST multipart "file"
+    A->>A: Validate type and size (4 MB)
+    A->>A: Rate limit per IP (6 per minute)
+    A->>V: POST upload_file<br/>X-API-Key from server env
+    V->>V: Trim edge silence, cut into 4 s windows
+    V-->>A: JSON frames: verdict + confidence per window
+    A->>A: interpret(): drop no-content, time-weight the rest
+    A-->>U: frames + summary (natural share, confidence, label)
+    U->>U: Render verdict, timeline and window cards
 ```
-Browser                    Next.js API route               Velma
--------                    -----------------               -----
-pick or record audio
-  |  POST /api/detect  --> validate type and size
-  |  (multipart "file")    rate limit per IP
-  |                        POST upload_file  ------------> batch endpoint
-  |                        X-API-Key: <server env>         per-frame verdicts
-  |  <-- cleaned result <-- summarise frames  <----------- JSON
-render meter + timeline
-```
+
+The browser never sees the API key and never talks to Velma directly.
 
 The route calls the batch endpoint documented at [docs.modulate.ai/api-reference/svd/batch](https://docs.modulate.ai/api-reference/svd/batch):
 
@@ -90,25 +101,79 @@ Velma accepts `webm`, `ogg`, `opus`, `wav`, `mp3`, `m4a` and many other containe
 - The key is never logged and never included in a response.
 - `.env.local` is in `.gitignore`. Only `.env.example` with an empty value is committed.
 
-## Reading the result
+## How a clip is split into windows
 
-Velma does not return a single fake score. For every four second window (two seconds of overlap) it returns a **verdict** (`synthetic`, `non-synthetic` or `no-content`) and a **confidence** in that verdict. Confidence is how sure Velma is of the verdict it gave. It is not the probability that the audio is synthetic.
+Velma does the splitting, not this app. The batch endpoint processes the file from start to finish in fixed **4 second windows** (its docs call them frames):
 
-This app turns the windows into one clip-level reading:
+```mermaid
+flowchart LR
+    A["Uploaded clip"] --> B["Trim leading and<br/>trailing silence"]
+    B --> C["Cut into contiguous<br/>4 s windows"]
+    C --> D["Pad the last window<br/>if shorter than 4 s"]
+    D --> E["Score each window:<br/>verdict + confidence"]
+    E --> F["Frames returned<br/>with start and end ms"]
+```
 
-1. Drop `no-content` windows, as the Velma docs advise.
-2. Work out the share of the remaining speech time that was `non-synthetic`.
-3. Show that share on the meter and map it to a label.
+- Windows are back to back: `0:00 – 0:04`, `0:04 – 0:08`, `0:08 – 0:12` and so on. Timestamps refer to the original file, so trimmed silence does not shift them.
+- Audio shorter than 4 seconds is padded before scoring. Velma needs at least 0.5 seconds, and 4 to 60 seconds is recommended.
+- A window with no usable speech gets the verdict `no-content` with confidence `1.0`. This is assigned before the model runs, so silence is never guessed at.
+- A 12 second clip of speech therefore yields about 3 windows. A 32 second clip with 16 seconds of speech can yield 8 windows, with the silent ones marked `no-content`.
+
+The app shows one **window card** per frame (verdict, time range and confidence bar) and a **timeline** that lays the windows out in order. In the timeline each segment is as wide as its window, coloured by verdict, and brighter when Velma is more confident.
+
+Source: [Velma Deepfake Detection docs](https://docs.modulate.ai/get-started/deepfake).
+
+## Metrics: natural, synthetic and confidence
+
+Velma does not return a single fake score. Every window carries a **verdict** (`synthetic`, `non-synthetic` or `no-content`) and a **confidence** from 0 to 1 in that verdict. The app combines the windows into the metrics on the Verdict card.
+
+| Metric | What it means | How it is computed |
+|---|---|---|
+| **Window verdict** | Velma's call for one 4 s window | Returned by Velma |
+| **Window confidence** | How sure Velma is of *that verdict*, 0 to 1 | Returned by Velma |
+| **Natural** | Share of detected speech judged `non-synthetic` | Time-weighted share over speech windows |
+| **Synthetic** | Share of detected speech judged `synthetic` | `1 − Natural` |
+| **Avg confidence** | Typical certainty across the clip | Time-weighted mean of window confidence over speech windows |
+| **Speech seconds** | How much audio was actually scored | Sum of speech window lengths |
+
+```text
+speech      = windows whose verdict is not "no-content"
+Natural     = Σ length(non-synthetic windows) / Σ length(speech windows)
+Synthetic   = 1 − Natural
+AvgConf     = Σ confidence × length / Σ length          (speech windows only)
+```
+
+### Confidence is not a fake score
+
+Confidence says how certain Velma is about the verdict it gave. It is **not** the probability that the audio is synthetic.
+
+- `non-synthetic` at `0.97` means Velma is 97% sure the speech is natural.
+- `synthetic` at `0.97` means Velma is 97% sure the speech is synthetic. It does not mean "3% fake".
+- That is why the first screenshot below reads **Natural 0.00, Synthetic 1.00, Avg confidence 0.97**: the clip is judged fully synthetic, and Velma is very sure about it.
+- Avg confidence says nothing about direction. Read it together with Natural and Synthetic.
+
+### Worked examples
+
+| Clip | Windows (verdict @ confidence) | Natural | Synthetic | Avg confidence |
+|---|---|---|---|---|
+| Text-to-speech voice, 12 s | 3 × synthetic @ 0.97 | 0.00 | 1.00 | 0.97 |
+| Real voice, 8 s | 2 × non-synthetic @ 0.92 | 1.00 | 0.00 | 0.92 |
+| Mixed, 8 s | non-synthetic @ 0.90, synthetic @ 0.70 | 0.50 | 0.50 | 0.80 |
+| 16 s of speech in a 32 s file | 4 × synthetic @ 0.97, 4 × no-content | 0.00 | 1.00 | 0.97 (silence excluded) |
+
+The `no-content` windows never count towards Natural, Synthetic or Avg confidence. If every window is `no-content`, the app reports "No speech detected" instead of a score.
+
+## From windows to a label
 
 Modulate does not publish a clip-level threshold and advises setting one against your own labelled recordings. The cut-offs in [`lib/interpret.ts`](lib/interpret.ts) are demo defaults chosen for this repo, not Modulate values:
 
-| Share of speech judged non-synthetic | Label |
+| Natural share of speech | Label |
 |---|---|
 | 75% or more | Likely real |
 | Between 25% and 75% | Unsure |
 | 25% or less | Likely synthetic |
 
-Change `LIKELY_REAL_MIN` and `LIKELY_SYNTHETIC_MAX` to suit your data.
+Change `LIKELY_REAL_MIN` and `LIKELY_SYNTHETIC_MAX` to suit your data. The label uses only the Natural share. Confidence does not move a clip between labels, it is shown so you can judge how firm each call is.
 
 Modulate publishes accuracy results for the model on the [Deepfake Detection benchmark page](https://docs.modulate.ai/benchmarks/deepfake-detection). This repo does not make accuracy claims of its own.
 
@@ -159,34 +224,41 @@ Only add clips you recorded yourself or whose licence allows public redistributi
 
 ## Project structure
 
-```
-app/
-  api/detect/route.ts   server route: validate, rate limit, call Velma
-  layout.tsx            fonts and theme
-  page.tsx              hero, step card, footer
-components/
-  detector.tsx          the 3-step flow
-  gauge.tsx             animated meter
-  waveform.tsx          SVG waveform
-  theme-toggle.tsx      light and dark
-  ui/                   shadcn/ui primitives
-lib/
-  velma.ts              endpoint, formats, limits, response types
-  interpret.ts          frames to clip-level label
-  rate-limit.ts         in-memory limiter
-  audio.ts              waveform decoding and recording helpers
-public/samples/         manifest.json and your clips
-docs/screenshots/       UI screenshots
+```text
+modulate-repo-2/
+├── app/
+│   ├── api/detect/route.ts     server route: validate, rate limit, call Velma, summarise
+│   ├── layout.tsx              fonts and theme
+│   ├── page.tsx                header, hero, detector, footer
+│   └── globals.css             Tailwind and colour tokens (light and dark)
+├── components/
+│   ├── detector.tsx            upload/record, control pill, verdict, timeline, window cards
+│   ├── waveform.tsx            SVG waveform and the dotted voice bar
+│   ├── theme-toggle.tsx        light and dark switch
+│   └── ui/                     shadcn/ui primitives (button, card, collapsible)
+├── lib/
+│   ├── velma.ts                endpoint, allowed formats, limits, response types
+│   ├── interpret.ts            windows to Natural, Synthetic, confidence and label
+│   ├── rate-limit.ts           in-memory per-IP limiter
+│   ├── audio.ts                waveform decoding and recording helpers
+│   └── utils.ts                class name helper
+├── public/samples/             manifest.json and your sample clips
+├── docs/screenshots/           UI screenshots used in this README
+├── assets/banner.png           README banner
+├── .env.example                VELMA_API_KEY placeholder
+└── LICENSE                     MIT
 ```
 
 ## Screenshots
+
+The control pill stays at the bottom of the screen while you scroll, then rests above the footer at the end of the page.
 
 | | Light | Dark |
 |---|---|---|
 | Desktop | [home](docs/screenshots/home-desktop-light.png) | [home](docs/screenshots/home-desktop-dark.png) |
 | Mobile | [home](docs/screenshots/home-mobile-light.png) | [home](docs/screenshots/home-mobile-dark.png) |
 
-Steps and states: [result, light](docs/screenshots/step3-result-desktop-light.png), [result, dark](docs/screenshots/step3-result-desktop-dark.png), [result, mobile](docs/screenshots/step3-result-mobile-light.png), [choose, empty](docs/screenshots/step1-choose-empty.png), [choose, ready](docs/screenshots/step1-choose-ready.png), [analysing](docs/screenshots/step2-analysing.png), [missing key](docs/screenshots/error-missing-key.png), [bad file](docs/screenshots/error-bad-file.png), [mic denied](docs/screenshots/error-mic-denied.png).
+Steps and states: [result, light](docs/screenshots/step3-result-desktop-light.png), [result, dark](docs/screenshots/step3-result-desktop-dark.png), [result, mobile](docs/screenshots/step3-result-mobile-light.png), [pill above footer](docs/screenshots/result-pill-above-footer.png), [choose, ready](docs/screenshots/step1-choose-ready.png), [analysing](docs/screenshots/step2-analysing.png), [bad file](docs/screenshots/error-bad-file.png).
 
 ## Links
 
