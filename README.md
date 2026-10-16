@@ -66,25 +66,24 @@ Other scripts: `pnpm lint`, `pnpm exec tsc --noEmit`, `pnpm build`, `pnpm start`
 ## How it works
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor U as Browser
-    participant A as Next.js API route<br/>/api/detect
-    participant V as Velma<br/>batch endpoint
+flowchart TD
+    classDef browser fill:#dbeafe,stroke:#2563eb,color:#0f172a
+    classDef server fill:#e5e7eb,stroke:#4b5563,color:#0f172a
+    classDef velma fill:#ede9fe,stroke:#7c3aed,color:#0f172a
 
-    U->>U: Pick, drop or record audio
-    U->>A: POST multipart "file"
-    A->>A: Validate type and size (4 MB)
-    A->>A: Rate limit per IP (6 per minute)
-    A->>V: POST upload_file<br/>X-API-Key from server env
-    V->>V: Trim edge silence, cut into 4 s windows
-    V-->>A: JSON frames: verdict + confidence per window
-    A->>A: interpret(): drop no-content, time-weight the rest
-    A-->>U: frames + summary (natural share, confidence, label)
-    U->>U: Render verdict, timeline and window cards
+    A["<b>1. Browser</b><br/>Pick, drop or record audio"]:::browser
+    B["<b>2. Next.js route /api/detect</b><br/>Check file type and size (max 4 MB)<br/>Rate limit: 6 requests per minute per IP"]:::server
+    C["<b>3. Velma batch endpoint</b><br/>Trim edge silence, cut into 4 s windows<br/>Score each window: verdict + confidence"]:::velma
+    D["<b>4. Next.js route /api/detect</b><br/>Drop no-content windows<br/>Compute natural share, confidence and label"]:::server
+    E["<b>5. Browser</b><br/>Show verdict, timeline and window cards"]:::browser
+
+    A -- "POST multipart field: file" --> B
+    B -- "POST upload_file<br/>X-API-Key added on the server" --> C
+    C -- "JSON frames" --> D
+    D -- "frames + summary" --> E
 ```
 
-The browser never sees the API key and never talks to Velma directly.
+Blue steps run in the browser, grey steps on your server, purple steps at Velma. The browser never sees the API key and never talks to Velma directly.
 
 The route calls the batch endpoint documented at [docs.modulate.ai/api-reference/svd/batch](https://docs.modulate.ai/api-reference/svd/batch):
 
